@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SOC Stock kg/m² 視覺化 (H3 階層選擇)</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.1.8/dist/leaflet-rotate.min.css" />
+
+    <script src='https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js'></script>
+    <script src="https://unpkg.com/h3-js@4.2.1/dist/h3-js.umd.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Microsoft JhengHei', 'Helvetica Neue', Arial, sans-serif;
+        }
+        #map {
+            width: 100%;
+            height: 100vh;
+            background-color: #333;
+        }
+        .info {
+            padding: 8px 10px;
+            font: 14px/16px 'Microsoft JhengHei', Arial, sans-serif;
+            background: rgba(255, 255, 255, 0.95);
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            min-width: 250px;
+        }
+        .info h4 {
+            margin: 0 0 8px;
+            color: #333;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .info-content {
+            color: #555;
+            line-height: 1.6;
+        }
+        .info-footer {
+            font-size: 11px;
+            color: #777;
+            margin-top: 8px;
+            border-top: 1px solid #eee;
+            padding-top: 5px;
+        }
+        .legend {
+            line-height: 22px;
+            color: #333;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .legend i {
+            width: 20px;
+            height: 16px;
+            float: left;
+            margin-right: 10px;
+            opacity: 1;
+            border: 1px solid rgba(255,255,255,0.8);
+            border-radius: 2px;
+        }
+        .legend-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+            font-size: 14px;
+        }
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            font-size: 16px;
+            color: #333;
+        }
+        .error {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 0, 0, 0.9);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            z-index: 1000;
+            max-width: 300px;
+        }
+        .rotate-indicator {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 12px;
+            z-index: 1000;
+            display: none;
+        }
+        .layer-selector {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+            font-size: 14px;
+        }
+        .layer-selector select {
+            margin-left: 10px;
+            padding: 5px 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+        }
+        .layer-selector label {
+            font-weight: bold;
+            color: #333;
+        }
+        .processing {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            font-size: 16px;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading">載入中...</div>
+    <div id="processing" class="processing" style="display: none;">處理中...</div>
+    <div id="rotateIndicator" class="rotate-indicator">旋轉模式 - 拖曳來旋轉地圖</div>
+    <div class="layer-selector">
+        <label for="layerSelect">H3 階層：</label>
+        <select id="layerSelect">
+            <option value="6">第6層 (大區域)</option>
+            <option value="7">第7層</option>
+            <option value="8">第8層</option>
+            <option value="9" selected>第9層 (原始)</option>
+        </select>
+    </div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.1.8/dist/leaflet-rotate.min.js"></script>
+    <script>
+        // 初始化地圖、圖層組和變數
+        const drawnItems = new L.FeatureGroup();
+        let geojsonLayer;
+        let highlightedHexagonLayers = new Set();
+        let originalData = null; // 儲存原始 GeoJSON 資料
+        let aggregatedData = new Map(); // 儲存不同階層的聚合資料
+
+        const map = L.map('map', {
+            rotate: true,
+            bearing: 0,
+        }).setView([23.7, 121.0], 8);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 18,
+            opacity: 0.95
+        }).addTo(map);
+
+        map.addLayer(drawnItems);
+
+        // 右鍵拖曳旋轉功能
+        let isRotating = false;
+        let rotateStartPoint = null;
+        let rotateStartBearing = 0;
+        const rotateIndicator = document.getElementById('rotateIndicator');
+        map.getContainer().addEventListener('contextmenu', function(e) { e.preventDefault(); });
+        map.getContainer().addEventListener('mousedown', function(e) {
+            if (e.button === 2) {
+                isRotating = true;
+                rotateStartPoint = { x: e.clientX, y: e.clientY };
+                rotateStartBearing = map.getBearing();
+                rotateIndicator.style.display = 'block';
+                map.dragging.disable();
+                e.preventDefault();
+            }
+        });
+        document.addEventListener('mousemove', function(e) {
+            if (isRotating && rotateStartPoint) {
+                const dx = e.clientX - rotateStartPoint.x;
+                const rotationSensitivity = 0.5;
+                const angle = dx * rotationSensitivity;
+                const newBearing = rotateStartBearing + angle;
+                map.setBearing(newBearing);
+                e.preventDefault();
+            }
+        });
+        document.addEventListener('mouseup', function(e) {
+            if (e.button === 2 && isRotating) {
+                isRotating = false;
+                rotateStartPoint = null;
+                rotateIndicator.style.display = 'none';
+                map.dragging.enable();
+                e.preventDefault();
+            }
+        });
+        document.addEventListener('mouseleave', function() {
+            if (isRotating) {
+                isRotating = false;
+                rotateStartPoint = null;
+                rotateIndicator.style.display = 'none';
+                map.dragging.enable();
+            }
+        });
+
+        // 色彩與樣式函式
+        function getColor(d) {
+            if (d == null || isNaN(d)) return '#E0E0E0';
+            return d > 11 ? '#1A438A' : d > 10 ? '#3288BD' : d > 9 ? '#66C2A5' :
+                   d > 8  ? '#c5e996' : d > 7  ? '#FEE08B' : d > 6 ? '#FDAE61' :
+                   d > 5  ? '#F46D43' : d > 4  ? '#D53E4F' : '#E0F2F1';
+        }
+
+        function style(feature) {
+            const p = feature.properties.prediction;
+            return {
+                fillColor: getColor(p), weight: 0.5, opacity: 0.8, color: '#ffffff',
+                fillOpacity: 0.7, dashArray: p == null || isNaN(p) ? '3, 3' : ''
+            };
+        }
+
+        // 控制項：右上角資訊面板
+        let info = L.control();
+        info.onAdd = function(map) {
+            this._div = L.DomUtil.create('div', 'info');
+            this.update();
+            return this._div;
+        };
+        info.update = function(data) {
+            if (data && data.isSummary) {
+                const { count, totalArea, totalMassTonnes, average } = data;
+                this._div.innerHTML = `<h4>選取範圍統計</h4>
+                    <div class="info-content">
+                        範圍內六角形：<b>${count}</b> 個<br>
+                        選取總面積：<b>${Math.round(totalArea).toLocaleString()}</b> m²<br>
+                        SOC Stock 總和：<b>${totalMassTonnes.toFixed(3)}</b> t<br>
+                        SOC Stock 平均值：<b>${average.toFixed(2)}</b> kg/m²
+                    </div>
+                    <div class="info-footer">使用左方工具可編輯或刪除此範圍</div>`;
+            } else if (data) {
+                const h3Id = data.h3_index || data.h3_id || 'N/A';
+                const prediction = data.prediction;
+                const predictionText = (prediction != null && !isNaN(prediction))
+                    ? `數值：${prediction.toFixed(2)} kg/m<sup>2</sup>` : '數值：無資料';
+                this._div.innerHTML = `<h4>SOC Stock kg/m<sup>2</sup></h4>
+                    <div class="info-content"><b>H3 Index：${h3Id}</b><br>${predictionText}</div>`;
+            } else {
+                this._div.innerHTML = '<h4>SOC Stock kg/m<sup>2</sup></h4>' +
+                    '<div class="info-content">將游標移至六角形區域上方<br>或使用左方工具繪製選取範圍<br><br><b>操作提示：</b><br>右鍵拖曳可旋轉地圖</div>';
+            }
+        };
+        info.addTo(map);
+
+        // 滑鼠事件處理器
+        function highlightFeature(e) {
+            const layer = e.target;
+            if (drawnItems.getLayers().length === 0) {
+                 layer.setStyle({ weight: 2, color: '#333333', dashArray: '', fillOpacity: 0.95 });
+                 if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+                     layer.bringToFront();
+                 }
+                 info.update(layer.feature.properties);
+            }
+        }
+        function resetHighlight(e) {
+            if (geojsonLayer && drawnItems.getLayers().length === 0) {
+                geojsonLayer.resetStyle(e.target);
+                info.update();
+            }
+        }
+        function zoomToFeature(e) { map.fitBounds(e.target.getBounds()); }
+        function onEachFeature(feature, layer) {
+            layer.on({ mouseover: highlightFeature, mouseout: resetHighlight, click: zoomToFeature });
+        }
+
+        // 繪圖與統計相關功能
+        const drawControl = new L.Control.Draw({
+            edit: { featureGroup: drawnItems, remove: true },
+            draw: {
+                polygon: {
+                    shapeOptions: { color: '#ffdd00', weight: 2, fillOpacity: 0.1 },
+                    showArea: true,
+                    metric: ['km', 'm']
+                },
+                polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false
+            }
+        });
+        map.addControl(drawControl);
+
+        function clearAllStyles() {
+             if (geojsonLayer) {
+                geojsonLayer.eachLayer(function(layer) {
+                    geojsonLayer.resetStyle(layer);
+                });
+            }
+            highlightedHexagonLayers.clear();
+        }
+
+        // 顯示/隱藏處理狀態
+        function showProcessing() {
+            document.getElementById('processing').style.display = 'block';
+        }
+        
+        function hideProcessing() {
+            document.getElementById('processing').style.display = 'none';
+        }
+
+        // 等待 H3 函式庫載入的輔助函式
+        function waitForH3() {
+            return new Promise((resolve) => {
+                if (typeof h3 !== 'undefined') {
+                    console.log('H3 函式庫已載入');
+                    console.log('可用函式:', Object.keys(h3));
+                    resolve();
+                } else {
+                    const checkH3 = setInterval(() => {
+                        if (typeof h3 !== 'undefined') {
+                            clearInterval(checkH3);
+                            console.log('H3 函式庫已載入');
+                            console.log('可用函式:', Object.keys(h3));
+                            resolve();
+                        }
+                    }, 100);
+                }
+            });
+        }
+
+        // 修正的 H3 階層轉換與聚合功能 - 使用真正的 H3 API
+        async function aggregateDataToLayer(targetLayer) {
+            if (!originalData || !originalData.features) return null;
+            
+            // 確保 H3 函式庫已載入
+            await waitForH3();
+            
+            // 只能從第9層向上聚合到第6-8層
+            if (targetLayer >= 9) {
+                console.warn('無法聚合到相同或更高解析度的階層');
+                return null;
+            }
+            
+            // 檢查 H3 函式是否可用
+            if (!h3.cellToParent || !h3.cellToBoundary || !h3.isValidCell) {
+                console.error('必要的 H3 函式不可用:', {
+                    cellToParent: !!h3.cellToParent,
+                    cellToBoundary: !!h3.cellToBoundary,
+                    isValidCell: !!h3.isValidCell
+                });
+                return null;
+            }
+            
+            const aggregated = new Map();
+            let processedCount = 0;
+            let errorCount = 0;
+            
+            console.log(`開始聚合第9層資料到第${targetLayer}層...`);
+            
+            originalData.features.forEach(feature => {
+                const originalH3 = feature.properties.h3_index;
+                const prediction = feature.properties.prediction;
+                
+                if (!originalH3 || prediction == null || isNaN(prediction)) {
+                    return;
+                }
+                
+                try {
+                    // 檢查 H3 ID 是否有效
+                    if (!h3.isValidCell(originalH3)) {
+                        console.warn('無效的 H3 ID:', originalH3);
+                        errorCount++;
+                        return;
+                    }
+                    
+                    // 使用 H3.js 的 cellToParent 函數轉換到上層
+                    const parentH3 = h3.cellToParent(originalH3, targetLayer);
+                    
+                    if (!parentH3) {
+                        console.warn('無法獲取父層 H3:', originalH3, 'to layer', targetLayer);
+                        errorCount++;
+                        return;
+                    }
+                    
+                    if (!aggregated.has(parentH3)) {
+                        aggregated.set(parentH3, {
+                            predictions: [],
+                            totalPrediction: 0,
+                            count: 0
+                        });
+                    }
+                    
+                    const data = aggregated.get(parentH3);
+                    data.predictions.push(prediction);
+                    data.totalPrediction += prediction;
+                    data.count++;
+                    processedCount++;
+                } catch (error) {
+                    console.warn('H3 轉換錯誤:', originalH3, 'to layer', targetLayer, error);
+                    errorCount++;
+                }
+            });
+            
+            console.log(`聚合統計: 成功 ${processedCount}, 錯誤 ${errorCount}, 產生 ${aggregated.size} 個聚合六角形`);
+            
+            // 建立新的 GeoJSON
+            const features = [];
+            let geoCount = 0;
+            let geoErrorCount = 0;
+            
+            aggregated.forEach((data, parentH3) => {
+                try {
+                    // 使用 H3.js 的 cellToBoundary 函數獲取六角形邊界
+                    const boundary = h3.cellToBoundary(parentH3);
+                    
+                    if (!boundary || boundary.length === 0) {
+                        console.warn('無法獲取邊界:', parentH3);
+                        geoErrorCount++;
+                        return;
+                    }
+                    
+                    // 轉換座標格式 (H3 返回 [lat, lng]，需要轉換為 [lng, lat])
+                    const coords = boundary.map(point => [point[1], point[0]]);
+                    coords.push(coords[0]); // 閉合多邊形
+                    
+                    const avgPrediction = data.totalPrediction / data.count;
+                    
+                    features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Polygon',
+                            coordinates: [coords]
+                        },
+                        properties: {
+                            h3_index: parentH3,
+                            prediction: avgPrediction,
+                            original_count: data.count
+                        }
+                    });
+                    geoCount++;
+                } catch (error) {
+                    console.warn('生成六角形邊界錯誤:', parentH3, error);
+                    geoErrorCount++;
+                }
+            });
+            
+            console.log(`幾何處理統計: 成功 ${geoCount}, 錯誤 ${geoErrorCount}`);
+            console.log(`成功聚合到第 ${targetLayer} 層，共 ${features.length} 個六角形`);
+            
+            if (features.length === 0) {
+                console.error('沒有產生任何聚合六角形');
+                return null;
+            }
+            
+            return {
+                type: 'FeatureCollection',
+                features: features
+            };
+        }
+
+        // 更新地圖顯示
+        async function updateMapLayer(targetLayer) {
+            showProcessing();
+            
+            // 清除現有圖層
+            if (geojsonLayer) {
+                map.removeLayer(geojsonLayer);
+            }
+            clearAllStyles();
+            drawnItems.clearLayers();
+            info.update();
+            
+            let dataToDisplay;
+            
+            try {
+                if (targetLayer === 9) {
+                    // 使用原始資料
+                    dataToDisplay = originalData;
+                    console.log('使用原始第9層資料');
+                } else if (targetLayer >= 6 && targetLayer <= 8) {
+                    // 使用聚合資料
+                    if (aggregatedData.has(targetLayer)) {
+                        dataToDisplay = aggregatedData.get(targetLayer);
+                        console.log(`使用快取的第 ${targetLayer} 層資料`);
+                    } else {
+                        console.log(`正在聚合到第 ${targetLayer} 層...`);
+                        dataToDisplay = await aggregateDataToLayer(targetLayer);
+                        if (dataToDisplay && dataToDisplay.features.length > 0) {
+                            aggregatedData.set(targetLayer, dataToDisplay);
+                            console.log(`成功聚合並快取第 ${targetLayer} 層資料`);
+                        } else {
+                            console.error(`無法聚合到第 ${targetLayer} 層`);
+                            hideProcessing();
+                            return;
+                        }
+                    }
+                } else {
+                    console.error(`不支援的階層：${targetLayer}`);
+                    hideProcessing();
+                    return;
+                }
+                
+                if (dataToDisplay && dataToDisplay.features && dataToDisplay.features.length > 0) {
+                    geojsonLayer = L.geoJSON(dataToDisplay, { style, onEachFeature }).addTo(map);
+                    console.log(`顯示第 ${targetLayer} 層，共 ${dataToDisplay.features.length} 個六角形`);
+                } else {
+                    console.error(`無法顯示第 ${targetLayer} 層的資料`);
+                }
+            } catch (error) {
+                console.error('更新地圖圖層時發生錯誤:', error);
+                showError(`切換到第 ${targetLayer} 層時發生錯誤`);
+            } finally {
+                hideProcessing();
+            }
+        }
+
+        // 統計計算功能
+        function calculateAndHighlightStats(selectionPolygon) {
+            clearAllStyles();
+
+            let sumOfPredictions = 0;
+            let totalMassKg = 0;
+            let totalAreaM2 = 0;
+            let hexagonCount = 0;
+
+            if (!geojsonLayer) return;
+
+            const selectionGeoJSON = selectionPolygon.toGeoJSON();
+
+            geojsonLayer.eachLayer(function(hexagonLayer) {
+                const center = hexagonLayer.getBounds().getCenter();
+                const point = turf.point([center.lng, center.lat]);
+                const isInside = turf.booleanPointInPolygon(point, selectionGeoJSON);
+
+                const props = hexagonLayer.feature.properties;
+
+                if (isInside && props && props.prediction != null && !isNaN(props.prediction)) {
+                    const prediction = props.prediction;
+                    const hexagonAreaM2 = L.GeometryUtil.geodesicArea(hexagonLayer.getLatLngs()[0]);
+
+                    sumOfPredictions += prediction;
+                    totalAreaM2 += hexagonAreaM2;
+                    totalMassKg += prediction * hexagonAreaM2;
+                    hexagonCount++;
+
+                    hexagonLayer.setStyle({
+                        weight: 2.5,
+                        color: '#FFFF00',
+                        dashArray: '',
+                        fillOpacity: 0.95
+                    });
+                    hexagonLayer.bringToFront();
+                    highlightedHexagonLayers.add(hexagonLayer);
+                } else {
+                    hexagonLayer.setStyle({ fillOpacity: 0.6 });
+                }
+            });
+
+            const averageSOC = hexagonCount > 0 ? (sumOfPredictions / hexagonCount) : 0;
+            const totalMassTonnes = totalMassKg / 1000;
+
+            info.update({
+                isSummary: true,
+                count: hexagonCount,
+                totalArea: totalAreaM2,
+                totalMassTonnes: totalMassTonnes,
+                average: averageSOC
+            });
+        }
+
+        // 繪圖事件監聽器
+        map.on(L.Draw.Event.CREATED, function (event) {
+            drawnItems.clearLayers();
+            const layer = event.layer;
+            layer.setStyle({ opacity: 0, fillOpacity: 0 });
+            drawnItems.addLayer(layer);
+            calculateAndHighlightStats(layer);
+        });
+
+        map.on('draw:edited', function (event) {
+            event.layers.eachLayer(function (layer) {
+                calculateAndHighlightStats(layer);
+            });
+        });
+
+        map.on('draw:deleted', function () {
+            clearAllStyles();
+            info.update();
+        });
+
+        // 階層選擇事件監聽器
+        document.getElementById('layerSelect').addEventListener('change', function(e) {
+            const targetLayer = parseInt(e.target.value);
+            updateMapLayer(targetLayer);
+        });
+
+        // 圖例控制項
+        let legend = L.control({position: 'bottomright'});
+        legend.onAdd = function(map) {
+            const div = L.DomUtil.create('div', 'legend');
+            const grades = [4, 5, 6, 7, 8, 9, 10, 11];
+            const labels = ['4-5', '5-6', '6-7', '7-8', '8-9', '9-10', '10-11', '11+'];
+            div.innerHTML = '<div class="legend-title">SOC Stock kg/m<sup>2</sup></div>';
+            for (let i = 0; i < grades.length; i++) {
+                div.innerHTML += `<i style="background:${getColor(grades[i] + 0.1)}"></i> ${labels[i]}<br>`;
+            }
+            div.innerHTML += '<i style="background:#E0E0E0"></i> 無資料<br>';
+            return div;
+        };
+        legend.addTo(map);
+
+        // 載入與錯誤處理
+        function hideLoading() { document.getElementById('loading').style.display = 'none'; }
+        function showError(message) {
+            hideLoading();
+            hideProcessing();
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error';
+            errorDiv.innerHTML = `<strong>錯誤：</strong>${message}`;
+            document.body.appendChild(errorDiv);
+            setTimeout(() => { if (errorDiv.parentNode) errorDiv.parentNode.removeChild(errorDiv); }, 5000);
+        }
+
+        // 載入 GeoJSON 資料
+        fetch('taipin_h3_prediction.geojson')
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                return response.json();
+            })
+            .then(async data => {
+                hideLoading();
+                if (!data.features || !Array.isArray(data.features)) throw new Error('GeoJSON 資料格式不正確');
+                if (data.features.length === 0) { showError('GeoJSON 檔案中沒有資料'); return; }
+                
+                // 儲存原始資料
+                originalData = data;
+                
+                // 等待 H3 函式庫載入
+                await waitForH3();
+                
+                // 初始顯示第9層（原始資料）
+                await updateMapLayer(9);
+                
+                try { 
+                    if (geojsonLayer) {
+                        map.fitBounds(geojsonLayer.getBounds()); 
+                    }
+                } catch (e) { 
+                    console.warn('無法調整地圖邊界:', e); 
+                }
+                
+                console.log(`成功載入 ${data.features.length} 個 H3 第9層六角形`);
+            })
+            .catch(error => {
+                console.error('載入 GeoJSON 時發生錯誤:', error);
+                let errorMessage = '無法載入 GeoJSON 檔案。';
+                if (error.message.includes('HTTP 404')) errorMessage = '找不到 taipin_h3_prediction.geojson 檔案。';
+                else if (error.message.includes('Failed to fetch')) errorMessage = '網路連線問題或路徑不正確。';
+                else if (error.message.includes('JSON')) errorMessage = 'GeoJSON 檔案格式有誤。';
+                else if (error.message.includes('h3 is not defined')) errorMessage = 'H3 函式庫載入失敗。';
+                showError(errorMessage);
+            });
+    </script>
+</body>
+</html>
